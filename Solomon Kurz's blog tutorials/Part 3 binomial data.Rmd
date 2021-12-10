@@ -1,0 +1,311 @@
+---
+title: 'Power, Part the Third: Simulating Binomial Data'
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup}
+pacman::p_load(tidyverse,brms,report,parameters,bayestestR, insight, see, rstanarm, tidybayes)
+```
+
+
+Example of binary data in a tidy tibble:
+
+```{r}
+
+n <- 10
+z <- 7
+
+tibble(id = letters[1:5], # ID's for participants
+       z  = rpois(n = 5, lambda = 5), # total counts of "questions correct" out of 10 questions
+       n  = n) # total observations (per person)
+
+```
+
+
+# Step 1: Generate data from the DGP
+
+This example is the probability that someone will hit a ball in a baseball game.
+
+IRL, the batting average is around .25, so that's where we will start.
+
+```{r}
+set.seed(3)
+
+d <- tibble(y = rbinom(n = 50, size = 1, prob = .25))
+
+str(d)
+```
+
+
+Here's what these data look like in a bar plot:
+```{r}
+theme_set(theme_gray() + theme(panel.grid = element_blank()))
+
+d %>% 
+  mutate(y = factor(y)) %>% 
+  ggplot(aes(x = y)) + geom_bar()
+```
+
+
+# Step 2: Model data
+
+*Step 2a: Choose a prior.*
+
+```{r}
+get_prior(data = d, 
+          family = binomial,
+          y | trials(1) ~ 1)
+```
+
+That's really damn wide though; better to be reasonable and go with $N ~ (0,2)$.
+
+*Step 2b: Feed prior into brms or rstanarm and run model.*
+
+```{r}
+fit1 <-
+  brm(data = d, 
+      family = binomial,
+      y | trials(1) ~ 1,
+      prior(normal(0, 2), class = Intercept),
+      seed = 3)
+
+
+#### rstanarm ####
+
+fit2=stan_glm(y~1, 
+              family = binomial(link = "logit"), 
+              data=d, 
+              prior = student_t(5,location=NULL, scale=NULL, autoscale = TRUE),
+              prior_intercept = student_t(5,location = 0, scale = 2.5, autoscale = FALSE), 
+              #prior_PD = FALSE, 
+              algorithm = c("sampling"), 
+              mean_PPD = TRUE,
+              adapt_delta = 0.95, 
+              #QR = FALSE, 
+              #sparse = FALSE,
+              chains=4,iter=4000,cores=4)
+```
+
+
+This is verification that both models produce similar estimates...
+```{r}
+tidy_posterior=function(model){
+  output=parameters::model_parameters(model) %>% select(c(Parameter,Median,CI_low,CI_high))
+  output=as_tibble(output)
+  return(output)
+}
+
+tidy_posterior(fit1)
+tidy_posterior(fit2)
+
+```
+
+
+If you're using brms, be aware that **the intercept estimate is on the log-odds scale**; you can transform it with this code:
+```{r}
+fixef(fit1)["Intercept", 1] %>% 
+  inv_logit_scaled()
+
+#### rstanarm ####
+
+
+```
+
+But that's just the estimate for the parameter, we also need the HDI's.
+
+You can also work with the full posterior by extracting draws, then plotting them.
+
+```{r}
+# extract the posterior draws
+posterior_samples(fit1) %>% 
+  # transform from the log-odds to a probability metric
+  transmute(p = inv_logit_scaled(b_Intercept)) %>% 
+  # plot!
+  ggplot(aes(x = p)) +
+  geom_density(fill = "grey25", size = 0) +
+  scale_x_continuous("probability of a hit", limits = c(0, 1)) +
+  scale_y_continuous(NULL, breaks = NULL)
+
+########## {easystats} VERSION for rstanarm!!! ###############
+
+get_parameters(fit2) %>% #extract posterior draws from model
+  rename("Intercept"="(Intercept)") %>% # solving translation issues from brms to rstanarm
+  transmute(p = inv_logit_scaled(Intercept)) %>% # transform from the log-odds to a probability metric
+  # plot!
+  ggplot(aes(x = p)) +
+  geom_density(fill = "grey25", size = 0) +
+  scale_x_continuous("probability of a hit", limits = c(0, 1)) +
+  scale_y_continuous(NULL, breaks = NULL)
+
+
+```
+
+This shows that the posterior is very much below 0.5, so 0.5 is not a very credible value for this simulation.
+
+We can also check this by looking at the posterior median and percentile-based 95% intervals
+```{r}
+
+#### brms version ####
+posterior_samples(fit1) %>% 
+  transmute(p = inv_logit_scaled(b_Intercept)) %>% 
+  median_qi()
+
+
+#### rstanarm ####
+
+# working line-by-line version of function, with an rstanarm model
+
+head(posterior_samples(fit2)) # list of posterior draws. NOT HDI's! These are actual median estimates
+
+test=as_tibble(posterior_samples(fit2) %>% 
+                 rename("Intercept"="(Intercept)")) %>% 
+  transmute(p = inv_logit_scaled(Intercept))
+
+tidybayes::median_qi(test) # pull median quantiles
+
+
+# all together now....
+posterior_samples(fit2) %>% 
+  rename("Intercept"="(Intercept)") %>%
+  transmute(p = inv_logit_scaled(Intercept)) %>% 
+  tidybayes::median_qi()
+
+```
+
+Sure enough, 0.5 isn't within those intervals
+
+# Mini power analysis
+
+*On to iterative simulations. Now we want to know what happens when we generate 100 sets of data.*
+
+**Use this function to generate the data**
+
+```{r DGP function}
+
+sim_data_fit <- function(seed, n_player) {
+  
+  n_trials <- 1 # do not touch
+  prob_hit <- .25 # probability of event from 0 to 1
+  
+  set.seed(seed)
+  
+  d <- tibble(y = rbinom(n    = n_player, 
+                         size = n_trials, 
+                         prob = prob_hit))
+  
+  update(fit1,
+         newdata = d,
+         seed = seed) %>% 
+  posterior_samples() %>% 
+  transmute(p = inv_logit_scaled(b_Intercept)) %>% 
+  tidybayes::median_qi() %>% 
+    select(.lower:.upper)
+  
+}
+
+
+#### rstanarm version of the above function ####
+
+sim_data_fit_rstanarm <- function(seed, n_player) {
+  
+  n_trials <- 1
+  prob_hit <- .25
+  
+  set.seed(seed)
+  
+  d <- tibble(y = rbinom(n    = n_player, 
+                         size = n_trials, 
+                         prob = prob_hit))
+  
+  update(fit2,
+         data = d,
+         seed = seed) %>% 
+    posterior_samples() %>% 
+    rename("Intercept"="(Intercept)") %>% # extract posterior draws
+    transmute(p = inv_logit_scaled(Intercept)) %>%# convert back from log-odds scale
+    tidybayes::median_qi() %>% #
+    select(.lower:.upper)
+  
+}
+```
+
+RUN THE SIMULATION TO GENERATE DATA!
+
+```{r mini power sim}
+
+t1 <- Sys.time()
+
+sim1 <-
+  tibble(seed = 1:100) %>% 
+  mutate(ci = map(seed, sim_data_fit, n_player = 50)) %>% 
+  unnest()
+
+t2 <- Sys.time()
+totaltime_brms=t2-t1
+totaltime_brms
+
+#### rstan ####
+t1 <- Sys.time()
+
+sim2 <-
+  tibble(seed = 1:100) %>% 
+  mutate(ci = map(seed, sim_data_fit_rstanarm, n_player = 50)) %>% 
+  unnest()
+
+t2 <- Sys.time()
+totaltime_rstanarm=t2-t1
+totaltime_rstanarm
+```
+
+Check results
+
+```{r results}
+
+# Plot HDI's
+sim1 %>% 
+  ggplot(aes(x = seed, ymin = .lower, ymax = .upper)) +
+  geom_hline(yintercept = c(.25, .5), color = "white") +
+  geom_linerange() +
+  xlab("seed (i.e., simulation index)") +
+  scale_y_continuous("probability of hitting the ball", limits = c(0, 1))
+
+# Summarize power
+sim1 %>% 
+  mutate(width = .upper - .lower) %>% 
+  summarise(`conventional power` = mean(.upper < .5),
+            `mean width`         = mean(width),
+            `width below .25`    = mean(width < .25))
+
+
+#### rstanarm ####
+
+# Plot HDI's
+sim2 %>% 
+  ggplot(aes(x = seed, ymin = .lower, ymax = .upper)) +
+  geom_hline(yintercept = c(.25, .5), color = "white") +
+  geom_linerange() +
+  xlab("seed (i.e., simulation index)") +
+  scale_y_continuous("probability of hitting the ball", limits = c(0, 1))
+
+
+#Summarize power
+sim2 %>% 
+  mutate(width = .upper - .lower) %>% 
+  summarise(`conventional power` = mean(.upper < .5),
+            `mean width`         = mean(width),
+            `width below .25`    = mean(width < .25))
+```
+
+
+*When this starts to look like you want it to, follow this up by doing a proper simulation with >=1,000 iterations.*
+
+As a final recommendation, he says you should "run your power simulation based on how you want to interpret and report your results." So, if we want to intepret and report primarily in terms of Odds Ratios, make sure that our estimates are on that scale when we do this.
+
+# Running the full sim
+
+```{r}
+
+```
+

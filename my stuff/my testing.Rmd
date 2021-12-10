@@ -1,0 +1,119 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+
+```{r}
+pacman::p_load(tidyverse,janitor, brms, rstanarm, bayestestR, performance, insight, parameters, report, see)
+```
+
+
+# Step 1. Generate data from the DGP
+
+We are going to imagine/hypothesize that the group of practitioners as a whole is correct 65% of the time. That is, they had a 65% probability of correctly detecting which hand was near the patient. Furthermore, individual abilities were within 7% of this (i.e., SD= 7%)
+
+
+You can create the data set in two different ways; pick one of the following.
+
+```{r}
+
+#### Kruschke's version: Using an 'ideal' mean and SD ####
+
+beta_ab_from_mean_sd <- function(mean, sd) {
+  
+  if (mean <= 0 | mean >= 1) stop("must have 0 < mean < 1")
+  if (sd <= 0) stop("sd must be > 0")
+  kappa <- mean * (1 - mean) / sd^2 - 1
+  if (kappa <= 0) stop("invalid combination of mean and sd")
+  a <- mean * kappa
+  b <- (1.0 - mean) * kappa
+  return(list(a = a, b = b))
+  
+}
+
+# specify idealized hypothesis:
+ideal_group_mean <- 0.65
+ideal_group_sd   <- 0.07
+
+
+# Specify how much data you have to support this hypothesis
+
+ideal_n_subj         <- 100  # more subjects => higher confidence in hypothesis
+ideal_n_trl_per_subj <- 100  # more trials => higher confidence in hypothesis
+
+b <- beta_ab_from_mean_sd(ideal_group_mean, ideal_group_sd)
+
+# make the results reproducible
+set.seed(13)
+
+d <-
+  # make a subject index and generate random theta values for idealized subjects
+  tibble(s     = 1:ideal_n_subj, # every subject gets a number. Like a Response ID in Qualtrics.
+         theta = rbeta(ideal_n_subj, b$a, b$b)) %>% # Draw a random theta value for each subject, from a beta dist. with the above params
+  # transform the theta values to exactly match idealized mean and SD
+  mutate(theta_transformed = ((theta - mean(theta)) / sd(theta)) * ideal_group_sd + ideal_group_mean) %>% 
+  # `theta_transformed` must be between 0 and 1
+  mutate(theta_transformed = ifelse(theta_transformed >= 0.999, 0.999,
+                                    ifelse(theta_transformed <= 0.001, 0.001,
+                                           theta_transformed))) %>% 
+  # generate idealized data very close to thetas
+  mutate(z = round(theta_transformed * ideal_n_trl_per_subj)) %>% 
+  # create vector of 0's and 1's matching the z values generated above
+  mutate(y = map(z, ~c(rep(1, .), rep(0, ideal_n_trl_per_subj - .)))) %>% 
+  unnest(y)
+
+
+#### Kurz's blog post: Using the probability/proportion ####
+
+set.seed(3)
+
+d <- tibble(y = rbinom(n = 50, size = 1, prob = .25))
+
+str(d)
+
+```
+
+Note that the main variables you're concerned about in the generated data set are 's' and 'y'; "think of the rest as showing our work"
+
+
+# Model the data with brms or rstanarm
+
+
+
+
+```{r}
+
+```
+
+
+
+
+
+# check/view distribution of parameters
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
