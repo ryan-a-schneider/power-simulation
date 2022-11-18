@@ -6,9 +6,8 @@ editor_options:
 ---
 
 ```{r setup}
-pacman::p_load(tidyverse,brms,report,parameters,bayestestR, insight, see, rstanarm, tidybayes)
+pacman::p_load(tidyverse,brms,report,parameters,bayestestR, insight, see, tidybayes)
 ```
-
 
 Example of binary data in a tidy tibble:
 
@@ -23,12 +22,11 @@ tibble(id = letters[1:5], # ID's for participants
 
 ```
 
-
 # Step 1: Generate data from the DGP
 
-This example is the probability that someone will hit a ball in a baseball game.
+The first step is to **generate data you think will resemble your experimental data**. This example is the probability that someone will hit a ball in a baseball game. IRL, the batting average is around .25, so that's where we will start.
 
-IRL, the batting average is around .25, so that's where we will start.
+Here, he is producing a simple binomial distribution of the proportion of batters that hit a ball.
 
 ```{r}
 set.seed(3)
@@ -38,8 +36,8 @@ d <- tibble(y = rbinom(n = 50, size = 1, prob = .25))
 str(d)
 ```
 
-
 Here's what these data look like in a bar plot:
+
 ```{r}
 theme_set(theme_gray() + theme(panel.grid = element_blank()))
 
@@ -48,8 +46,9 @@ d %>%
   ggplot(aes(x = y)) + geom_bar()
 ```
 
-
 # Step 2: Model data
+
+Now you need to model that data with a logistic regression to get estimates on the proportion (i.e., the parameter).
 
 *Step 2a: Choose a prior.*
 
@@ -88,11 +87,12 @@ fit2=stan_glm(y~1,
               chains=4,iter=4000,cores=4)
 ```
 
-
 This is verification that both models produce similar estimates...
+
 ```{r}
 tidy_posterior=function(model){
-  output=parameters::model_parameters(model) %>% select(c(Parameter,Median,CI_low,CI_high))
+  output=bayestestR::describe_posterior(model, ci_method="hdi", ci=.95) %>% 
+    select(c(Parameter,Median,CI_low,CI_high))
   output=as_tibble(output)
   return(output)
 }
@@ -102,14 +102,11 @@ tidy_posterior(fit2)
 
 ```
 
-
 If you're using brms, be aware that **the intercept estimate is on the log-odds scale**; you can transform it with this code:
+
 ```{r}
 fixef(fit1)["Intercept", 1] %>% 
   inv_logit_scaled()
-
-#### rstanarm ####
-
 
 ```
 
@@ -145,6 +142,7 @@ get_parameters(fit2) %>% #extract posterior draws from model
 This shows that the posterior is very much below 0.5, so 0.5 is not a very credible value for this simulation.
 
 We can also check this by looking at the posterior median and percentile-based 95% intervals
+
 ```{r}
 
 #### brms version ####
@@ -178,7 +176,9 @@ Sure enough, 0.5 isn't within those intervals
 
 # Mini power analysis
 
-*On to iterative simulations. Now we want to know what happens when we generate 100 sets of data.*
+*That was the process for doing it once. O.k., on to iterative simulations; now we want to know what happens when we generate 100 sets of data.*
+
+This is important because all samples are probabilistic and we never want to interpret the results of just one.
 
 **Use this function to generate the data**
 
@@ -298,8 +298,7 @@ sim2 %>%
             `width below .25`    = mean(width < .25))
 ```
 
-
-*When this starts to look like you want it to, follow this up by doing a proper simulation with >=1,000 iterations.*
+*When this starts to look like you want it to, follow this up by doing a proper simulation with \>=1,000 iterations.*
 
 As a final recommendation, he says you should "run your power simulation based on how you want to interpret and report your results." So, if we want to intepret and report primarily in terms of Odds Ratios, make sure that our estimates are on that scale when we do this.
 
@@ -308,4 +307,3 @@ As a final recommendation, he says you should "run your power simulation based o
 ```{r}
 
 ```
-
