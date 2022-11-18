@@ -10,7 +10,6 @@ Can be found [here](https://solomonkurz.netlify.app/post/bayesian-power-analysis
 ```{r packages, include=FALSE}
 
 pacman::p_load(tidyverse,brms,broom,report,parameters,bayestestR, rstanarm)
-
 ```
 
 ### Bayesian power analysis, Part 1 recap

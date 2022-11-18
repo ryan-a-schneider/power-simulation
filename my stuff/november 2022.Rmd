@@ -1,0 +1,105 @@
+---
+title: "Untitled"
+output: html_document
+date: "2022-11-18"
+---
+
+```{r setup, include=FALSE}
+pacman::p_load(tidyverse,brms,easystats, tidybayes, bayesplot)
+```
+
+## I. Generate practice sample
+
+```{r}
+
+mu_struc=30
+mu_UNstruc=50
+
+
+# define the means
+mu_c <- 0
+mu_t <- 0.5
+
+# determine the group size
+n <- 50
+
+# simulate the data
+set.seed(1)
+
+d <-
+  tibble(group     = rep(c("control", "treatment"), each = n)) %>% # repeat each word 50 times
+  mutate(treatment = ifelse(group == "control", 0, 1), # set the treatment condition variable coding (0= control, 1=treatment)
+         y         = ifelse(group == "control", # create a new variable for the observed data....
+                            rnorm(n, mean = mu_c, sd = 1), # for control group, set mu and sd
+                            rnorm(n, mean = mu_t, sd = 1))) # set mu and sd for treatment group
+```
+
+## II. Create practice model
+
+```{r}
+fit <-
+  brm(data = d,
+      family = gaussian,
+      y ~ treatment,
+      prior = c(prior(normal(0, 2), class = b),
+                prior(student_t(3, 1, 1), class = sigma)),
+      seed = 1)
+
+
+fit=brm(data = d, 
+      family = gaussian,
+      y ~ 1 + treatment,
+      prior = c(prior(normal(0, 3), class = Intercept),
+                prior(normal(0, 3), class = b),
+                prior(uniform(0, 50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 4)
+
+bayestestR::hdi(fit)
+```
+
+## III. Simulate
+
+```{r}
+sim_d_and_fit <- function(seed, n) {
+  
+  mu_c <- 0
+  mu_t <- 0.5
+  
+  set.seed(seed)
+  
+  d <-
+    tibble(group     = rep(c("control", "treatment"), each = n)) %>% 
+    mutate(treatment = ifelse(group == "control", 0, 1),
+           y         = ifelse(group == "control", 
+                              rnorm(n, mean = mu_c, sd = 1),
+                              rnorm(n, mean = mu_t, sd = 1)))
+  
+  update(fit,
+         newdata = d, 
+         seed = seed) %>% 
+    tidy(prob = .95) %>% 
+    filter(term == "b_treatment")
+}
+
+n_sim <- 100
+
+s3 <-
+  tibble(seed = 1:n_sim) %>% 
+  mutate(tidy = map(seed, sim_d_and_fit, n = 50)) %>% 
+  unnest(tidy)
+```
+
+## IV. Check results
+
+```{r}
+theme_set(theme_grey() +
+            theme(panel.grid = element_blank()))
+
+s3 %>% 
+  ggplot(aes(x = seed, y = estimate, ymin = lower, ymax = upper)) +
+  geom_hline(yintercept = c(0, .5), color = "white") +
+  geom_pointrange(fatten = 1/2) +
+  labs(x = "seed (i.e., simulation index)",
+       y = expression(beta[1]))
+```
