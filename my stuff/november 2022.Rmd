@@ -5,7 +5,8 @@ date: "2022-11-18"
 ---
 
 ```{r setup, include=FALSE}
-pacman::p_load(tidyverse,brms,easystats, tidybayes, bayesplot)
+legaldmlab::primeR(analysis_type = "Bayes")
+library(broom.mixed)
 ```
 
 ## I. Generate practice sample
@@ -55,7 +56,7 @@ fit=brm(data = d,
       iter = 2000, warmup = 1000, chains = 4, cores = 4,
       seed = 4)
 
-bayestestR::hdi(fit)
+bayestestR::hdi(fit, ci_method="HDI", ci=.89)
 ```
 
 ## III. Simulate
@@ -69,7 +70,7 @@ sim_d_and_fit <- function(seed, n) {
   set.seed(seed)
   
   d <-
-    tibble(group     = rep(c("control", "treatment"), each = n)) %>% 
+    tibble(group     = rep(c("control", "treatment"), each = n)) |>  
     mutate(treatment = ifelse(group == "control", 0, 1),
            y         = ifelse(group == "control", 
                               rnorm(n, mean = mu_c, sd = 1),
@@ -77,14 +78,20 @@ sim_d_and_fit <- function(seed, n) {
   
   update(fit,
          newdata = d, 
-         seed = seed) %>% 
-    tidy(prob = .95) %>% 
+         seed = seed) |>  
+    tidy(prob = .95) |>  
     filter(term == "b_treatment")
 }
 
-n_sim <- 100
 
-s3 <-
+parameters::model_parameters(fit, ci_method="HDI", ci=.95) |> 
+  filter(str_detect(Parameter, "treatment"))
+
+
+####### Run simulation #############################
+n_sim <- 5
+
+small_sim <-
   tibble(seed = 1:n_sim) %>% 
   mutate(tidy = map(seed, sim_d_and_fit, n = 50)) %>% 
   unnest(tidy)
@@ -96,7 +103,7 @@ s3 <-
 theme_set(theme_grey() +
             theme(panel.grid = element_blank()))
 
-s3 %>% 
+small_sim |>  
   ggplot(aes(x = seed, y = estimate, ymin = lower, ymax = upper)) +
   geom_hline(yintercept = c(0, .5), color = "white") +
   geom_pointrange(fatten = 1/2) +
