@@ -5,21 +5,23 @@ date: "2022-11-18"
 ---
 
 ```{r setup, include=FALSE}
-legaldmlab::primeR(analysis_type = "Bayes")
+legaldmlab::primeR(analysis_type = "bayes")
 library(broom.mixed)
 ```
 
 ## I. Generate practice sample
 
-```{r}
+Using 2C:35-7 Drug Free School Zone as an example. This ranges from 12 to 63 months, for row E, across all time points.
 
-mu_struc=30
-mu_UNstruc=50
+```{r}
 
 
 # define the means
 mu_c <- 0
 mu_t <- 0.5
+
+mu_struc=25
+mu_UNstruc=35
 
 # determine the group size
 n <- 50
@@ -27,36 +29,54 @@ n <- 50
 # simulate the data
 set.seed(1)
 
+
 d <-
   tibble(group     = rep(c("control", "treatment"), each = n)) %>% # repeat each word 50 times
-  mutate(treatment = ifelse(group == "control", 0, 1), # set the treatment condition variable coding (0= control, 1=treatment)
-         y         = ifelse(group == "control", # create a new variable for the observed data....
-                            rnorm(n, mean = mu_c, sd = 1), # for control group, set mu and sd
-                            rnorm(n, mean = mu_t, sd = 1))) # set mu and sd for treatment group
+  mutate(treatment = ifelse(group == "control", 0, 1),
+         y         = ifelse(group == "control", 
+                                      rnorm(n, mean = mu_c, sd = 1), # for control group, set mu and sd
+                                      rnorm(n, mean = mu_t, sd = 1))) # set mu and sd for treatment group
+
+
+d_RS <-
+  tibble(group     = rep(c("structured", "unstructured"), each = n)) %>% 
+  mutate(treatment = ifelse(group == "structured", 0, 1),
+         y         = ifelse(group == "structured", 
+                                      rnorm(n, mean = mu_struc, sd = 5), 
+                                      rnorm(n, mean = mu_UNstruc, sd = 5)))
 ```
+
+The `ifelse` command that creates the outcome variable `y` follows a normal distribution, with the parameters set in the last lines.
 
 ## II. Create practice model
 
 ```{r}
+
+# Kurz's model
 fit <-
   brm(data = d,
       family = gaussian,
       y ~ treatment,
       prior = c(prior(normal(0, 2), class = b),
                 prior(student_t(3, 1, 1), class = sigma)),
-      seed = 1)
+      seed = 1,
+      fit = here::here("fitted models", "fit_kurz_1"))
 
 
-fit=brm(data = d, 
+# My model 
+fit_lin=brm(data = d_RS, 
       family = gaussian,
       y ~ 1 + treatment,
       prior = c(prior(normal(0, 3), class = Intercept),
                 prior(normal(0, 3), class = b),
-                prior(uniform(0, 50), class = sigma, ub = 50)),
-      iter = 2000, warmup = 1000, chains = 4, cores = 4,
-      seed = 4)
+                prior(lognormal(0, 5), class = sigma)),
+      seed = 4,
+      fit = here::here("fitted models", "fit_rs_1"))
+
+
 
 bayestestR::hdi(fit, ci_method="HDI", ci=.89)
+bayestestR::hdi(fit_lin, ci_method="HDI", ci=.89)
 ```
 
 ## III. Simulate
@@ -67,25 +87,27 @@ sim_d_and_fit <- function(seed, n) {
   mu_c <- 0
   mu_t <- 0.5
   
+  mu_struc=25
+  mu_UNstruc=35
+  
   set.seed(seed)
   
   d <-
     tibble(group     = rep(c("control", "treatment"), each = n)) |>  
     mutate(treatment = ifelse(group == "control", 0, 1),
            y         = ifelse(group == "control", 
-                              rnorm(n, mean = mu_c, sd = 1),
-                              rnorm(n, mean = mu_t, sd = 1)))
+                              rnorm(n, mean = mu_struc, sd = 1), # control condition for KS
+                              rnorm(n, mean = mu_UNstruc, sd = 1))) # treatment condition for KS
   
   update(fit,
          newdata = d, 
          seed = seed) |>  
     tidy(prob = .95) |>  
-    filter(term == "b_treatment")
+    filter(term == "treatment")
 }
 
 
-parameters::model_parameters(fit, ci_method="HDI", ci=.95) |> 
-  filter(str_detect(Parameter, "treatment"))
+parameters::model_parameters(fit, ci_method="HDI", ci=.95) #|> filter(str_detect(Parameter, "treatment"))
 
 
 ####### Run simulation #############################
