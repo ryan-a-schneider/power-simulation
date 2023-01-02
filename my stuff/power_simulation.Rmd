@@ -1,0 +1,187 @@
+---
+title: "Power Simulation"
+author: "Ryan Schneider, M.A."
+date: "2022-11-18"
+output:
+  html_document:
+    theme: cerulean
+    highlight: pygments
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    number_sections: no
+  word_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+```{r setup, include=FALSE}
+pacman::p_load(brms, easystats, tidyverse, janitor, flextable)
+```
+
+## I. Generate practice sample
+
+Using 2C:35-7 Drug Free School Zone as an example. This ranges from 12 to 63 months, for row E, across all time points.
+
+```{r generate_data}
+
+# define the means and SD's
+mu_struc=25
+sd_struc=5
+
+mu_UNstruc=35
+sd_UNstruc=5
+  
+# determine the group size
+n <- 50
+
+
+# simulate the data
+set.seed(1)
+
+d_RS <-
+  tibble(group     = rep(c("structured", "unstructured"), each = n)) %>% 
+  mutate(treatment = ifelse(group == "structured", 0, 1),
+         y         = ifelse(group == "structured", 
+                                      rnorm(n, mean = mu_struc, sd = sd_struc), 
+                                      rnorm(n, mean = mu_UNstruc, sd = sd_UNstruc)))
+```
+
+## II. Create practice model
+
+```{r practice_run}
+
+fit_lin=brm(data = d_RS, 
+      family = gaussian,
+      y ~ 1 + treatment,
+      prior = c(prior(normal(30, 5), class = Intercept),
+                prior(normal(0, 3), class = b),
+                prior(lognormal(0, 5), class = sigma)),
+      seed = 4,
+      file = here::here("fitted models", "test_model"))
+
+
+model_parameters(fit_lin, ci_method = "HDI") |> 
+  as_tibble() |> 
+  select(1, 3, 5:6) |> 
+  mutate(across(c(2:4), round, 2)) |> 
+  knitr::kable()
+```
+
+## III. Simulate
+
+Specify the number of simulations to be run, load the code, and then run the simulations.
+
+```{r simulation, message=FALSE, results="hide"}
+
+# A. Set the sample size
+n_sim <- 10
+
+
+# B. Load function (substituting broom for easystats)
+sim_d_and_fit_easystats <- function(seed, n) {
+  
+  set.seed(seed)
+  
+  d <-
+    tibble(group     = rep(c("control", "treatment"), each = n)) |>  
+    mutate(treatment = ifelse(group == "control", 0, 1),
+           y         = ifelse(group == "control", 
+                              rnorm(n, mean = mu_struc, sd = 1), 
+                              rnorm(n, mean = mu_UNstruc, sd = 1))) 
+  
+  update(fit_lin,
+         newdata = d, 
+         seed = seed) |>  
+    model_parameters("median", ci_method = "HDI") |> as_tibble() |> select(1, 3, 5:6) |>  
+    filter(Parameter == "b_treatment")
+}
+
+
+# C. Run simulation
+sim <-
+  tibble(seed = 1:n_sim) |>  
+  mutate(tidy = map(seed, sim_d_and_fit_easystats, n = 50)) |> 
+  unnest(tidy)
+
+# save(sim, file=here::here("Data", "large_sim.RData"))
+```
+
+## IV. Check Results 
+
+### Plots of HDI widths {.tabset}
+
+Plot the interval widths. Can we reject a value in the ROPE?
+
+```{r plots_1, fig.height=4, fig.width=8, dpi=300}
+theme_set(theme_grey() +
+            theme(panel.grid = element_blank()))
+
+
+sim |>  
+  ggplot(aes(x = seed, y = Median, ymin = CI_low, ymax = CI_high)) +
+  #geom_hline(yintercept = c(0, .5), color = "white") +
+  geom_pointrange(fatten = 1/2) +
+  labs(x = "seed (i.e., simulation index)",
+       y = expression(beta[1]))
+
+sim |> 
+  ggplot(aes(x = reorder(seed, CI_low), y = Median, ymin = CI_low, ymax = CI_high)) +
+  #geom_hline(yintercept = c(0, .5), color = "white") +
+  geom_pointrange(fatten = 1/2) +
+  scale_x_discrete("reordered by the lower level of the intervals", breaks = NULL) +
+  ylab(expression(beta[1])) # + coord_cartesian(ylim = c(-.5, 1.3))
+```
+
+```{r fig.height=5, fig.width=7, dpi=300, message=FALSE, warning=FALSE, results="hide"}
+# compute exact HDI widths and summarize all 500 of them
+sim <-
+  sim |> 
+  mutate(width = CI_high - CI_low)
+
+# view HDI widths as a histogram
+sim |> 
+  ggplot(aes(x = width)) +
+  geom_histogram(binwidth = NULL, color="green")+
+  labs(title = "Frequency Histogram of Interval Widths", subtitle = "Across 500 simulations")
+
+```
+
+### Descriptive table
+
+```{r table}
+
+width_descriptives=sim |> summarize('Median width'=median(width),
+                 'Mean width'=mean(width),
+                 'Narrowest width'=min(width),
+                 'Widest width'=max(width)) |> 
+  mutate(across(everything(), round, 2))  
+
+
+width_descriptives |> pivot_longer(cols = everything(),
+                                   names_to = "HDI Summary Stat",
+                                   values_to = "Value") |> 
+  flextable::flextable() |> 
+  flextable::autofit()
+```
+
+The posterior shows that the most probable estimate for $\beta_1$ is about 0.6, and the intervals range from about [0.2, 1.0]. That's wide. Lots of uncertainty in that estimate.
+
+## Minimum Degree of Precision
+
+What if we could narrow the HDI from its current width of 0.8 to \< .7? This code shows the probability of getting an interval width of less than the target X, for a given sample size
+
+```{r}
+
+target_width=.7
+
+sim |> 
+  mutate(check = ifelse(width < target_width, 1, 0)) |> 
+  summarise(`width power` = mean(check))
+```
+
+## Packages Used
+
+```{r package_citations}
+report::cite_packages(sessionInfo())
+```

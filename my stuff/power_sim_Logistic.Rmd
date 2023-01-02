@@ -1,0 +1,55 @@
+---
+title: "Your Document Title"
+author: "Document Author"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: cerulean
+    highlight: pygments
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    number_sections: no
+  word_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+# Logistic Regression Power Simulation
+
+## I. Generate Data
+
+```{r}
+
+legaldmlab::primeR(analysis_type = "Bayes")
+
+set.seed(3)
+
+d <- tibble(offer = rbinom(n = 50, size = 1, prob = .25))
+
+# set sample size
+n=50
+
+d_logistic <-tibble(group = rep(c("structured", "unstructured"), each = n)) |>  
+  mutate(treatment = ifelse(group == "structured", 0, 1),
+         y         = ifelse(group == "structured", 
+                                      purrr::rbernoulli(n=n, p=.7), 
+                                      purrr::rbernoulli(n=n, p=.4)))
+
+```
+
+## II. Model Data
+
+```{r}
+
+get_prior(data = d, 
+          family = binomial,
+          y | trials(1) ~ 1)
+
+fit_logreg <-brm(data = d_logistic, 
+                 family = binomial,
+                 formula =  y | trials(1) ~ 1,
+                 prior = c(prior(normal(0, 2), class = Intercept),
+                           prior(normal(0, 2), class = b)),
+                 seed = 3, file = here::here("fitted models", "Logistic_model"))
+```
