@@ -18,7 +18,7 @@ output:
 ```{r setup, echo=FALSE, warning=FALSE, message=FALSE}
 
 # load necessary packages
-pacman::p_load(brms, easystats, tidyverse)
+pacman::p_load(brms, parameters, bayestestR, effectsize, tidyverse)
 
 #### load some custom functions ####
 
@@ -125,7 +125,7 @@ Helpful to view a plot to check where the posterior is visually vs. the ROPE...
 
 ```{r}
 
-bayestestR::rope(fit_logreg, ci=.89, ci_method="HDI", range="default") |> 
+bayestestR::rope(fit_logreg, ci=.89, ci_method="HDI", range=c(-.18, .18)) |> 
   plot() + 
   theme_classic() +
   see::scale_fill_material()
@@ -147,7 +147,7 @@ sim_data_fit_logistic <- function(seed, n) {
    # GENERATE DATA 
   set.seed(seed)
   
-  d <- tibble(group = rep(c("structured", "unstructured"), each = sample_size)) |>  
+  d <- tibble(group = rep(c("structured", "unstructured"), each = n)) |>  
     mutate(treatment = ifelse(group == "structured", 0, 1),
          y         = ifelse(group == "structured", 
                                       purrr::rbernoulli(n=n, p=probOffer_structured), 
@@ -160,7 +160,7 @@ sim_data_fit_logistic <- function(seed, n) {
                                         newdata = d, 
                                         seed = seed))
                       
-  params=describe_posterior(new_fit, ci_method = "HDI", ci=.89) |> 
+  params=bayestestR::describe_posterior(new_fit, ci_method = "HDI", ci=.89) |> 
     select(c(Parameter, Median, CI_low, CI_high)) |> 
     mutate(across(c(Median, CI_low, CI_high), round, 2))
 
@@ -183,7 +183,7 @@ Example blocks provided below for checking precision and power.
 
 ### Precision
 
--   Make sure to filter for the effect you're interested in!
+-   Make sure to filter for the effect you're interested in if you have multiple!
 
 ```{r}
 # view HDI widths across all the simulations as a histogram
@@ -205,7 +205,7 @@ sim1_log_n65 |>
 
 -   Proportion of HDI's across all simulations that exclude values in the ROPE
 
--   Make sure to filter for the effect you're interested in if you have multiple parameters!
+-   Again, make sure to filter for the effect you're interested in if you have multiple parameters!
 
 ```{r}
 
@@ -260,9 +260,9 @@ For the custom function:
 
 -   `effect_direction` is the direction of the effect you created when you generated the idealized data in step one. Is there an increase or decrease
 
--   `target_width` is for setting a goal for
+-   `target_width` is for setting a goal for a minimum level of precision (cannot be empty; must supply a number)
 
--   `null_value` is the value to test against; it can either be 0 for a traditional Null Hypothesis test, or the upper or lower boundary of the ROPE, if doing an equivalence test (see Kruschke; x)
+-   `null_value` is the value to test against; it can either be 0 for a traditional Null Hypothesis test, or the upper or lower boundary of the ROPE, if doing an equivalence test
 
     -   see `bayestestR::rope_range()` and the web page tutorial here for suggestions on ROPE values
 
@@ -272,7 +272,8 @@ sim2_log_n75 |> # change just this line to run each simulation check individuall
   filter(Parameter == "b_treatment") |>  
   check_power_precision(effect_direction = "negative", target_width = 5, null_value = -.18)
 
-# ...or....
+
+# ...or, if you want to check a couple....
 
 ##################### DO ALL AT ONCE with purrr ###############
 
@@ -285,7 +286,7 @@ logistic_sims=list(n65=sim1_log_n65,
 
 # For i in list .x, apply function .f
 logistic_sims |> 
-  map(.f= filter, Parameter=="b_treatment") |> # may be necessary if you have lots of effects
+  map(.f= filter, Parameter=="b_treatment") |>
   map_df(.f= check_power_precision, effect_direction="negative", target_width = 5, null_value= -.18) |> 
   mutate(sample_size=names(logistic_sims))
 ```
@@ -300,30 +301,41 @@ save(sim1_log_n65, sim2_log_n75, sim3_log_n85, sim4_log_n95, sim5_log_n110,
 
 # Model fit
 save(fit_logreg, file = here::here("Data and Models", "log_power_fit.RData"), compress = FALSE)
+  
+```
 
+OPTIONAL: Export power and precision results to MS Word.
 
+FIX THIS? \>\>\> <https://davidgohel.github.io/flextable/reference/add_header_row.html>
 
-# OPTIONAL: Export results to MS Word
+```{r}
+
+########### Part 1: Prep the data frame (to look how you want it for the table) ##############
 pwr_table=logistic_sims |> 
   map(.f= filter, Parameter=="b_treatment") |> # may be necessary if you have lots of effects
   map_df(.f= check_power_precision, effect_direction="negative", target_width = 5, null_value= -.18) |> 
-  mutate(sample_size=names(logistic_sims))
+  mutate(sample_size=names(logistic_sims)) |> 
+  relocate(sample_size, .before = 1) |> 
+  relocate("Null Detection Power", .after = "sample_size")
+
+pwr_table=rename(pwr_table, "Sample Size"= "sample_size", "Mean HDI Width" = "Mean Width")
+
+
+######### Part 2: Turn above tibble into a flextable ##################
 
 library(flextable)
+pwr_table= flextable::flextable(pwr_table)
+
+# create initial styling for borders
 border_styling=officer::fp_border(color = "black", style = "solid", width = 1)
 
-# make table into a flextable
-pwr_table= flextable::flextable(pwr_table)
-  
-  # create initial styling for borders
-border_styling=officer::fp_border(color = "black", style = "solid", width = 1)
-  
-pwr_table=pwr_table |> 
+
+test=pwr_table |> 
     hline_bottom(border = border_styling, part = "header") |>
     hline_top(border = border_styling, part = "header") |>
     
     # CREATE A TITLE HEADER; APPLY FORMATTING
-    add_header_lines(values = "Power Simulation Results") |> 
+    add_header_lines(values = "Results of 1,500 Power Simulations") |> 
     hline_top(border = fp_border_default(width = 0), part = "header") |> 
     flextable::align(align = "left", part = "header", i=1) |> 
     italic(part = "header", i=1) |> 
@@ -336,18 +348,24 @@ pwr_table=pwr_table |>
     flextable::fontsize(part = "all", size = 11) |> 
     
     # SET COLUMN WIDTH/DIMENSIONS
-    autofit(part = "header") |> 
+    autofit(part = "header")  
     
-    # SET LINE SPACING
-    flextable::line_spacing(space = "0.5")
-  
+    
+add_header_row(pwr_table, values = c("Accuracy in Parameter Estimation"), top=FALSE)
+
+
 pwr_table
 
-pwr_table=add_footer_lines(test, 
-                 values = "Note. Null Detection Power is the proportion of HDI's that did not fall within the ROPE; Width Power is the proportion of HDI's that were at least as narrow as the target threshold (of 5.0)") |> 
+pwr_table=add_footer_lines(pwr_table, 
+                 values = "Note. Null Detection Power is the proportion of HDI's that did not fall within the ROPE; Width Power is the proportion of HDI's that were at least as narrow as the target threshold (of 5.0).") |> 
                  fontsize(part = "footer", size = 10) |>
                    font(part = "footer", fontname = "Times")
-  
+
+
+#### Part 3: EXPORT ####
+docx_file <- file.path(here::here("Figures and Tables"), "power_simulation_table.docx")
+
+save_as_docx(pwr_table, path = docx_file)
 ```
 
 ## VII. Session Info

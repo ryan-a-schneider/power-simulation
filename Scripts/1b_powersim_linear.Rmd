@@ -155,7 +155,7 @@ sim_d_and_fit_linear <- function(seed, n) {
                                         newdata = d, 
                                         seed = seed))
                       
-  params=describe_posterior(new_fit, ci_method = "HDI", ci=.89) |> 
+  params=bayestestR::describe_posterior(new_fit, ci_method = "HDI", ci=.89) |> 
     select(c(Parameter, Median, CI_low, CI_high)) |> 
     mutate(across(c(Median, CI_low, CI_high), round, 2))
 }
