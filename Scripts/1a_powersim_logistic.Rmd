@@ -69,9 +69,8 @@ probOffer_UNstructured=.60
 d_logistic <-tibble(group = rep(c("structured", "unstructured"), each = n)) |>  
   mutate(treatment = ifelse(group == "structured", 0, 1),
          y         = ifelse(group == "structured", 
-                                      purrr::rbernoulli(n=n, p=probOffer_structured), 
-                                      purrr::rbernoulli(n=n, p=probOffer_UNstructured))) |> 
-  mutate(y=ifelse(y==TRUE, 1, 0))
+                                      rbinom(n=n, size= 1, p=probOffer_structured), 
+                                      rbinom(n=n, size= 1, p=probOffer_UNstructured))) 
 
 
 # check
@@ -330,7 +329,7 @@ pwr_table= flextable::flextable(pwr_table)
 border_styling=officer::fp_border(color = "black", style = "solid", width = 1)
 
 
-test=pwr_table |> 
+pwr_table=pwr_table |> 
     hline_bottom(border = border_styling, part = "header") |>
     hline_top(border = border_styling, part = "header") |>
     
@@ -350,8 +349,7 @@ test=pwr_table |>
     # SET COLUMN WIDTH/DIMENSIONS
     autofit(part = "header")  
     
-    
-add_header_row(pwr_table, values = c("Accuracy in Parameter Estimation"), top=FALSE)
+
 
 
 pwr_table

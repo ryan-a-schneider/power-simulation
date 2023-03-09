@@ -45,6 +45,7 @@ check_precision=function(simulation_data, target_MAX_width){
     summarize('mean interval width'         = mean(width),
               'widths below target'    = mean(width < target_MAX_width))
 }
+
 ```
 
 ## I. Generate practice sample
