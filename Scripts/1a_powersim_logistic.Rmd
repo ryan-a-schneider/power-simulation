@@ -59,7 +59,7 @@ Create data with the smallest effect still of practical interest. What is the sm
 set.seed(3)
 
 # set an initial sample size
-n=50
+n=65
 
 # set parameters for the DGP; the probability of the event occuring in each condition
 probOffer_structured=.80
@@ -100,7 +100,7 @@ fit_logreg <-brm(data = d_logistic,
                  formula =  y | trials(1) ~ 1 + treatment,
                  prior = c(prior(normal(0, 3), class = Intercept),
                            prior(student_t(5, 0, 1), class = b)),
-                 seed = 3)
+                 seed = 3, iter = 1000, cores = 2)
 
 #################### DIAGNOSTICS ##############################
 diagnostic_posterior(fit_logreg, diagnostic = c("ESS", "Rhat"))|> 
@@ -272,6 +272,7 @@ sim2_log_n75 |> # change just this line to run each simulation check individuall
   check_power_precision(effect_direction = "negative", target_width = 5, null_value = -.18)
 
 
+
 # ...or, if you want to check a couple....
 
 ##################### DO ALL AT ONCE with purrr ###############
@@ -296,14 +297,14 @@ logistic_sims |>
 
 # Simulation results
 save(sim1_log_n65, sim2_log_n75, sim3_log_n85, sim4_log_n95, sim5_log_n110,
-     file=here::here("Data and Models", "logistic_sims.RData"), compress = FALSE)
+     file=here::here("Models", "logistic_sims.RData"), compress = FALSE)
 
 # Model fit
-save(fit_logreg, file = here::here("Data and Models", "log_power_fit.RData"), compress = FALSE)
+save(fit_logreg, file = here::here("Models", "log_power_fit.RData"), compress = FALSE)
   
 ```
 
-OPTIONAL: Export power and precision results to MS Word.
+## VI.b. OPTIONAL: Export Results to MS Word.
 
 FIX THIS? \>\>\> <https://davidgohel.github.io/flextable/reference/add_header_row.html>
 
@@ -323,12 +324,13 @@ pwr_table=rename(pwr_table, "Sample Size"= "sample_size", "Mean HDI Width" = "Me
 ######### Part 2: Turn above tibble into a flextable ##################
 
 library(flextable)
-pwr_table= flextable::flextable(pwr_table)
+pwr_table= flextable(pwr_table)
 
-# create initial styling for borders
+# create styling for the table's borders
 border_styling=officer::fp_border(color = "black", style = "solid", width = 1)
 
 
+######## Part 3: Apply formatting to flextable ########################
 pwr_table=pwr_table |> 
     hline_bottom(border = border_styling, part = "header") |>
     hline_top(border = border_styling, part = "header") |>
@@ -348,19 +350,19 @@ pwr_table=pwr_table |>
     
     # SET COLUMN WIDTH/DIMENSIONS
     autofit(part = "header")  
+
     
-
-
-
 pwr_table
 
+
+######### Part 4: Add footer notes #######################################
 pwr_table=add_footer_lines(pwr_table, 
                  values = "Note. Null Detection Power is the proportion of HDI's that did not fall within the ROPE; Width Power is the proportion of HDI's that were at least as narrow as the target threshold (of 5.0).") |> 
                  fontsize(part = "footer", size = 10) |>
                    font(part = "footer", fontname = "Times")
 
 
-#### Part 3: EXPORT ####
+######################## EXPORT ###########################################
 docx_file <- file.path(here::here("Figures and Tables"), "power_simulation_table.docx")
 
 save_as_docx(pwr_table, path = docx_file)

@@ -53,22 +53,22 @@ check_precision=function(simulation_data, target_MAX_width){
 Step I is to create an sample of data that you think reflects the real-world differences between the conditions.
 
 -   Using 2C:35-5 Manufacturing/Distributing a Controlled and Dangerous Substance (**1st degree**)
--   Penalty range for a pre-indictment plea ranges from 48 to 78 months (Row A)
+-   Penalty range for a pre-indictment plea ranges from 24 to 48 months (Row A). This represents the range the values of the DV could take.
 
 ```{r generate_data}
 
 # define the means and SD's
-mu_struc=60
-sd_struc=11
+mu_struc=36
+sd_struc=10
 
-mu_UNstruc=66
-sd_UNstruc=11
+mu_UNstruc=30
+sd_UNstruc=10
   
 # determine the group size
 n <- 50
 
 
-# simulate the data
+# simulate the data, making it reproducible
 set.seed(1)
 
 d1 <-
@@ -78,37 +78,43 @@ d1 <-
                                       rnorm(n, mean = mu_struc, sd = sd_struc), 
                                       rnorm(n, mean = mu_UNstruc, sd = sd_UNstruc)))
 
+
+d1 = d1 |> mutate(y_s=standardise(y))
+
 # View the samples created
 ggplot(d1, aes(x=y, fill=group)) + 
   theme_classic() +
   geom_density(alpha=.4)
 ```
 
-## II. Create practice model
+## II. Create practice models
 
 Now run linear regression to estimate the slope parameter in the sample above.
 
-```{r practice_model_fit_check}
+```{r practice_model_fit_check, results='hide', message=FALSE}
 
 fit_lin=brm(data = d1,
             family = gaussian,
             formula = y ~ 1 + treatment,
-            prior = c(prior(normal(62.5, 5), class = Intercept),
+            prior = c(prior(normal(33, 6), class = Intercept),
                       prior(student_t(5, 0, 9), class = b, coef="treatment"),
                       prior(lognormal(0, 5), class = sigma)),
-            seed = 4)
+            seed = 4,
+            iter = 2500, chains = 2, cores = 2)
+
+
+save(fit_lin, file=here::here("Models", "linear_power_fit.RData"))
 
 #################### MODEL DIAGNOSTICS ##############################
 diagnostic_posterior(fit_lin, diagnostic = c("ESS", "Rhat")) |> 
   mutate(Rhat_check=effectsize::interpret_rhat(Rhat),
          ESS_check=effectsize::interpret_ess(ESS))
 
-# POSTERIOR predictive check
-pp_check(fit_lin)
 
 #################### PARAMETERS AND EFFECT SIZE #################################
 # check bayesian parameter estimates
-describe_posterior(fit_lin, ci_method = "HDI", ci=0.89)
+describe_posterior(fit_lin, ci=.89, ci_method = "HDI",effects = "fixed",
+                   rope_range = c(-0.2,0.2))
 
 # Compare to frequentist model
 lm(y ~ treatment, data = d1) |> parameters::model_parameters()
@@ -116,13 +122,16 @@ lm(y ~ treatment, data = d1) |> parameters::model_parameters()
 
 ```{r practice_model_info}
 
-# check ROPE
-rope(fit_lin, range = c(-2,2), ci=.89, ci_method = "HDI", 
+############ check ROPE ############################
+
+# non-standardized
+rope(fit_lin, range = c(-1, 1), ci=.89, ci_method = "HDI", 
      effects = "fixed", 
      parameters = "treatment")
 
+
 # view plot
-plot(bayestestR::rope(fit_lin, ci=.89, ci_method="HDI", range=c(-2,2))) + 
+plot(bayestestR::rope(fit_lin, ci=.89, ci_method="HDI", range=c(-1, 1))) + 
   theme_classic() +
   see::scale_fill_material()
 
@@ -137,7 +146,7 @@ Specify the number of simulations to be run, load the function, and then run the
 ```{r simulation, message=FALSE, warning=FALSE, results="hide"}
 
 # A. Set the number of simulations and sample sizes
-n_simulations=1500
+n_simulations=2000
 
 
 # B. Load function
@@ -306,48 +315,114 @@ sim5_linear_n95 <-
   filter(Parameter!="b_Intercept")
 
 
-sim6_linear_n110 <-
+sim6_linear_n100 <-
   tibble(seed = 1:n_simulations) |>  
-  mutate(tidy = map(.x= seed, .f= sim_d_and_fit_linear, n = 110)) |>
+  mutate(tidy = map(.x= seed, .f= sim_d_and_fit_linear, n = 100)) |>
   unnest(tidy) |> 
   mutate(width = CI_high - CI_low) |> 
   filter(Parameter!="b_Intercept")
+
+
+
+# compile all objects into a single list, with the sample size as the name for each level
+linear_sims=list(n50=sim1_linear_n50, n65=sim2_linear_n65, n75=sim3_linear_n75, 
+                 n85=sim4_linear_n85, n95=sim5_linear_n95) #, n110=sim6_linear_n100)
+
+# save
+save(linear_sims, file=here::here("Models", "linear_sims.RData"))
 
 ```
 
 ### Check Results
 
+For the custom function:
+
+-   `effect_direction` is the direction of the effect you created when you generated the idealized data in step one. Is there an increase or decrease
+
+-   `target_width` is for setting a goal for a minimum level of precision (cannot be empty, must supply a number)
+
+-   `null_value` is the value to test against. Can either be 0 for a traditional Null Hypothesis test, or the upper or lower boundary of the ROPE, if doing an equivalence test. Use the lower boundary if the direction is negative, or the upper boundary if it's positive.
+
+    -   see `bayestestR::rope_range()` and the web page tutorial here for suggestions on ROPE values
+
 ```{r}
 # Method 1: Check one model at a time
 
 sim2_linear_n65 |>  
-  mutate(check = ifelse(CI_low > 2, 1, 0)) |> summarise(power = mean(check))
+  check_power_precision(effect_direction="negative", target_width = 5.7, null_value= -2)
 
 ##################### Method 2: DO FOR ALL AT ONCE with purrr ###############
-
-# compile all objects into a single list, with the sample size as the name for each level
-linear_sims=list(n50=sim1_linear_n50,
-                 n65=sim2_linear_n65,
-                 n75=sim3_linear_n75, 
-                 n85=sim4_linear_n85,
-                 n95=sim5_linear_n95,
-                 n110=sim6_linear_n110) 
 
 # For i in list .x, apply function .f
 linear_sims |> 
   map(.f= filter, Parameter=="b_treatment") |> # may be necessary if you have lots of effects
-  map_df(.f= check_power_precision, effect_direction="positive", target_width = 5.7, null_value= 2) |> 
+  map_df(.f= check_power_precision, 
+         effect_direction="negative", 
+         target_width = 5.0, null_value= -1) |> 
   mutate(sample_size=names(linear_sims))
 ```
 
-## VI. Save Results
+## Export table to MS Word
 
-Save the results of the simulations
+This table won't be completely done, but it'll be 95% of the way there. Finish the final touches in Word.
 
 ```{r}
-save(sim1_linear_n50, sim2_linear_n65,sim3_linear_n75, 
-     sim4_linear_n85, sim5_linear_n95, sim6_linear_n110,
-     file=here::here("Data and Models", "linear_sims.RData"), compress = FALSE)
+########### Part 1: Prep a data frame ##############
+pwr_table=linear_sims |> 
+  map(.f= filter, Parameter=="b_treatment") |> # may be necessary if you have lots of effects
+  map_df(.f= check_power_precision, effect_direction="negative", target_width = 5.0, null_value= -1.0) |> 
+  mutate(sample_size=names(linear_sims)) |> 
+  relocate(sample_size, .before = 1) |> 
+  relocate("Null Detection Power", .after = "sample_size")
 
-save(fit_lin,file=here::here("Data and Models", "linear_power_fit.RData"), compress = FALSE)
+pwr_table=rename(pwr_table, "Sample Size"= "sample_size", "Mean HDI Width" = "Mean Width")
+
+
+######### Part 2: Turn above tibble into a flextable ##################
+
+library(flextable)
+pwr_table= flextable(pwr_table)
+
+
+######## Part 3: Apply formatting to flextable ########################
+
+# create styling for the table's borders
+border_styling=officer::fp_border(color = "black", style = "solid", width = 1)
+
+# Apply formatting and styling
+pwr_table=pwr_table |> 
+    hline_bottom(border = border_styling, part = "header") |>
+    hline_top(border = border_styling, part = "header") |>
+    
+    # CREATE A TITLE HEADER; APPLY FORMATTING
+    add_header_lines(values = "Results of 2000 Power Simulations") |> 
+    hline_top(border = fp_border_default(width = 0), part = "header") |> 
+    flextable::align(align = "left", part = "header", i=1) |> 
+    italic(part = "header", i=1) |> 
+    
+    # FIX BORDER IN TABLE BODY
+    hline_bottom(border = border_styling, part = "body") |> 
+    
+    # SET FONT
+    flextable::font(part = "all", fontname = "Times New Roman") |> 
+    flextable::fontsize(part = "all", size = 11) |> 
+    
+    # SET COLUMN WIDTH/DIMENSIONS
+    autofit(part = "header")  
+
+    
+pwr_table
+
+
+######### Part 4: Add footer notes #######################################
+pwr_table=add_footer_lines(pwr_table, 
+                 values = "Note. Null Detection Power is the proportion of HDI's that did not fall within the ROPE; Width Power is the proportion of HDI's that were at least as narrow as the target threshold (of 5.0).") |> 
+                 fontsize(part = "footer", size = 10) |>
+                   font(part = "footer", fontname = "Times")
+
+
+######################## EXPORT ###########################################
+docx_file <- file.path(here::here("Figures and Tables"), "power_simulation_table.docx")
+
+save_as_docx(pwr_table, path = docx_file)
 ```
