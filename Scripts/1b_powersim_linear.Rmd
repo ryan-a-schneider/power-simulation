@@ -79,8 +79,6 @@ d1 <-
                                       rnorm(n, mean = mu_UNstruc, sd = sd_UNstruc)))
 
 
-d1 = d1 |> mutate(y_s=standardise(y))
-
 # View the samples created
 ggplot(d1, aes(x=y, fill=group)) + 
   theme_classic() +
@@ -114,7 +112,7 @@ diagnostic_posterior(fit_lin, diagnostic = c("ESS", "Rhat")) |>
 #################### PARAMETERS AND EFFECT SIZE #################################
 # check bayesian parameter estimates
 describe_posterior(fit_lin, ci=.89, ci_method = "HDI",effects = "fixed",
-                   rope_range = c(-0.2,0.2))
+                   rope_range = c(-1, 1))
 
 # Compare to frequentist model
 lm(y ~ treatment, data = d1) |> parameters::model_parameters()
@@ -123,13 +121,6 @@ lm(y ~ treatment, data = d1) |> parameters::model_parameters()
 ```{r practice_model_info}
 
 ############ check ROPE ############################
-
-# non-standardized
-rope(fit_lin, range = c(-1, 1), ci=.89, ci_method = "HDI", 
-     effects = "fixed", 
-     parameters = "treatment")
-
-
 # view plot
 plot(bayestestR::rope(fit_lin, ci=.89, ci_method="HDI", range=c(-1, 1))) + 
   theme_classic() +
@@ -165,7 +156,7 @@ sim_d_and_fit_linear <- function(seed, n) {
                                         newdata = d, 
                                         seed = seed))
                       
-  params=bayestestR::describe_posterior(new_fit, ci_method = "HDI", ci=.89) |> 
+  params=bayestestR::describe_posterior(new_fit, ci_method = "HDI", ci=.89) |> # HDI/CI settings
     select(c(Parameter, Median, CI_low, CI_high)) |> 
     mutate(across(c(Median, CI_low, CI_high), round, 2))
 }
@@ -174,16 +165,29 @@ sim_d_and_fit_linear <- function(seed, n) {
 
 sim1_linear_n50 <-
   tibble(seed = 1:n_simulations) |>  
-  mutate(tidy = map(.x= seed, .f= sim_d_and_fit_linear, n = 50)) |> 
+  mutate(tidy = map(.x= seed, .f= sim_d_and_fit_linear, n = 50)) |> # adjust sample size as desired
   unnest(tidy) |> 
-  mutate(width = CI_high - CI_low) |> 
-  filter(Parameter!="b_Intercept") 
+  mutate(width = CI_high - CI_low) |> # NOTE!!! This is the HDI; change function to get Credible Intervals
+  filter(Parameter!="b_Intercept") # discard estimates of the intercept parameter
 
 ```
 
 ## IV. Check Results
 
 ### Method 1: Rejecting Null values
+
+#### Proportion of intervals that contain a Null effect
+
+Check the proportion of the simulations that have a lower interval limit that is greater than 0; i.e., the proportion of simulations where the HDI/CI does not include 0.
+
+```{r}
+sim1_linear_n50 |>  
+  filter(Parameter == "b_treatment") |>  
+  mutate(check = ifelse(CI_low > 2, 1, 0)) |>  
+  summarise(power = mean(check))
+```
+
+### Method 2: Precision of Estimation
 
 #### Quantifying width
 
@@ -211,19 +215,6 @@ sim1_linear_n50 |>
                names_to = "HDI Summary Stat",
                values_to = "Value") 
 ```
-
-#### Proportion of intervals that contain a Null effect
-
-Check the proportion of the simulations that have a lower interval limit that is greater than 0; i.e., the proportion of simulations where the HDI/CI does not include 0.
-
-```{r}
-sim1_linear_n50 |>  
-  filter(Parameter == "b_treatment") |>  
-  mutate(check = ifelse(CI_low > 2, 1, 0)) |>  
-  summarise(power = mean(check))
-```
-
-### Method 2: Precision of Estimation
 
 > Once we're concerned with width size, about precision, the null hypothesis is no longer of direct relevance. And since we're no longer wed to thinking in terms of the null hypothesis, there's no real need to stick with a .8 threshold for evaluating 'width power.' Now if we wanted to stick with .8, we could. Though a little nonsensical, the .8 criterion would give our AIPE analysis a sense of familiarity with traditional power analyses, which some reviewers might appreciate. But in his text, Kruschke mentioned several other alternatives. One would be to set maximum value for our CI wdiths and simulate to find the n necessary so all our simulations pass that criterion. Another would follow Joseph, Wolfson, and du Berger (1995) who suggested we shoot for an n that produces widths that pass that criterion on average.
 
@@ -282,6 +273,7 @@ If you did not achieve your goal(s) in the first simulation, increase the sample
 ```{r message=FALSE, warning=FALSE, results="hide"}
 
 # Run more sims
+# If you change the sample size, also change the name of the sim to make it easy to identify later
 
 sim2_linear_n65 <-
   tibble(seed = 1:n_simulations) |>  
@@ -326,7 +318,7 @@ sim6_linear_n100 <-
 
 # compile all objects into a single list, with the sample size as the name for each level
 linear_sims=list(n50=sim1_linear_n50, n65=sim2_linear_n65, n75=sim3_linear_n75, 
-                 n85=sim4_linear_n85, n95=sim5_linear_n95) #, n110=sim6_linear_n100)
+                 n85=sim4_linear_n85, n95=sim5_linear_n95) #, n100=sim6_linear_n100)
 
 # save
 save(linear_sims, file=here::here("Models", "linear_sims.RData"))
@@ -337,13 +329,13 @@ save(linear_sims, file=here::here("Models", "linear_sims.RData"))
 
 For the custom function:
 
--   `effect_direction` is the direction of the effect you created when you generated the idealized data in step one. Is there an increase or decrease
+-   `effect_direction` is the direction of the effect you created when you generated the idealized data in step one. Is there an increase or decrease? See your ROPE plot in Section II to see if the posterior is above or below 0.
 
--   `target_width` is for setting a goal for a minimum level of precision (cannot be empty, must supply a number)
+-   `target_width` is for setting a goal for a minimum level of precision (cannot be empty, must supply a number).
 
--   `null_value` is the value to test against. Can either be 0 for a traditional Null Hypothesis test, or the upper or lower boundary of the ROPE, if doing an equivalence test. Use the lower boundary if the direction is negative, or the upper boundary if it's positive.
+-   `null_value` is the value to test against. Can either be 0 for a traditional Null Hypothesis test, or the upper or lower boundary of the ROPE, if doing an equivalence test. In the case of the latter, the effect direction determines the ROPE value (lower boundary if the direction is negative; the upper boundary if it's positive).
 
-    -   see `bayestestR::rope_range()` and the web page tutorial here for suggestions on ROPE values
+    -   see `bayestestR::rope_range()` for suggestions on default ROPE values for an unstandardized parameter
 
 ```{r}
 # Method 1: Check one model at a time
@@ -354,8 +346,11 @@ sim2_linear_n65 |>
 ##################### Method 2: DO FOR ALL AT ONCE with purrr ###############
 
 # For i in list .x, apply function .f
+
 linear_sims |> 
-  map(.f= filter, Parameter=="b_treatment") |> # may be necessary if you have lots of effects
+  # loop one: filter each list level for desired effect
+  map(.f= filter, Parameter=="b_treatment") |>
+  # loop two: apply custom function to each list level; return results as a unified table
   map_df(.f= check_power_precision, 
          effect_direction="negative", 
          target_width = 5.0, null_value= -1) |> 
